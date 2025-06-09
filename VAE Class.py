@@ -26,4 +26,4 @@ def custom_loss(y_true, y_pred):
 output_dim = 2
 property_predictor = build_property_predictor(latent_dim, output_dim)
 vae_with_prop_pred = VAEWithPropertyPrediction(encoder, decoder, property_predictor)
-vae_with_prop_pred.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001), loss=custom_loss)
+vae_with_prop_pred.compile(optimizer=tf.keras.optimizers.Adam(learning_rate), loss=custom_loss)

@@ -33,7 +33,7 @@ class VAEWithPropertyPrediction(Model):
         x_recon = self.decoder(z)
         y_pred = self.predictor(z)
         return tf.concat([x_recon, y_pred], axis=1)
-def joint_loss(y_true, y_pred):
+def custom_loss(y_true, y_pred):
     x_true = y_true[:, :2048]
     y_true_props = y_true[:, 2048:]
     x_pred = y_pred[:, :2048]

@@ -22,9 +22,9 @@ def custom_loss(y_true, y_pred):
     return total_loss
 
 #VAE class with joint loss
-class VAEWithPropertyPrediction(Model):
-    def __init__(self, encoder, decoder, predictor):
-        super(VAE, self).__init__()
+class VAE(tf.keras.Model):
+    def __init__(self, encoder, decoder, predictor, **kwargs):
+        super(VAE, self).__init__(**kwargs)
         self.encoder = encoder
         self.decoder = decoder
         self.predictor = predictor
@@ -33,6 +33,14 @@ class VAEWithPropertyPrediction(Model):
         x_recon = self.decoder(z)
         y_pred = self.predictor(z)
         return tf.concat([x_recon, y_pred], axis=1)
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            'encoder': serialize_keras_object(self.encoder),
+            'decoder': serialize_keras_object(self.decoder),
+            'predictor': serialize_keras_object(self.predictor),
+        })
+        return config
 def custom_loss(y_true, y_pred):
     x_true = y_true[:, :2048]
     y_true_props = y_true[:, 2048:]

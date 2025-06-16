@@ -1,0 +1,110 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+from rdkit import Chem
+from rdkit.Chem.rdFingerprintGenerator import GetMorganGenerator
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
+from tensorflow.keras.losses import MeanSquaredError
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras.models import load_model
+from tensorflow.keras.saving import serialize_keras_object, deserialize_keras_object, register_keras_serializable
+from tensorflow.keras.layers import Lambda, Input, Dense
+from tensorflow.keras.models import Model
+from tensorflow.keras import backend as K
+from IPython.display import clear_output
+from IPython import get_ipython
+@register_keras_serializable()
+def custom_loss(y_true, y_pred):
+    x_true = y_true[:, :2048]
+    prop_true = y_true[:, 2048:]
+    x_pred = y_pred[:, :2048]
+    prop_pred = y_pred[:, 2048:]
+    rec_loss = MeanSquaredError()(x_true, x_pred)
+    prop_loss = MeanSquaredError()(prop_true, prop_pred)
+    return rec_loss + prop_loss
+@register_keras_serializable()
+def sampling(args):
+    z_mean, z_log_var = args
+    epsilon = K.random_normal(shape=K.shape(z_mean))
+    return z_mean + K.exp(0.5 * z_log_var) * epsilon
+def build_encoder(input_dim, latent_dim):
+    x_in = Input(shape=(input_dim,))
+    x = Dense(512, activation='relu')(x_in)
+    x = Dense(256, activation='relu')(x)
+    z_mean = Dense(latent_dim)(x)
+    z_log_var = Dense(latent_dim)(x)
+    z = Lambda(sampling, output_shape=(latent_dim,))([z_mean, z_log_var])
+    #z = Lambda(sampling)([z_mean, z_log_var])
+    return Model(x_in, [z_mean, z_log_var, z])
+def build_decoder(latent_dim, output_dim):
+    z_in = Input(shape=(latent_dim,))
+    x = Dense(256, activation='relu')(z_in)
+    x = Dense(512, activation='relu')(x)
+    x_out = Dense(output_dim, activation='sigmoid')(x)
+    return Model(z_in, x_out)
+def build_predictor(latent_dim):
+    z_in = Input(shape=(latent_dim,))
+    x = Dense(128, activation='relu')(z_in)
+    x = Dense(64, activation='relu')(x)
+    y_out = Dense(2, activation='linear')(x)
+    return Model(z_in, y_out)
+@register_keras_serializable()
+class VAE(tf.keras.Model):
+    def __init__(self, encoder, decoder, predictor, **kwargs):
+        super(VAE, self).__init__(**kwargs)
+        self.encoder = encoder
+        self.decoder = decoder
+        self.predictor = predictor
+    def call(self, inputs):
+        z_mean, z_log_var, z = self.encoder(inputs)
+        x_recon = self.decoder(z)
+        y_pred = self.predictor(z)
+        return tf.concat([x_recon, y_pred], axis=1)
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            'encoder': serialize_keras_object(self.encoder),
+            'decoder': serialize_keras_object(self.decoder),
+            'predictor': serialize_keras_object(self.predictor),
+        })
+        return config
+    @classmethod
+    def from_config(cls, config):
+        encoder = deserialize_keras_object(config.pop('encoder'))
+        decoder = deserialize_keras_object(config.pop('decoder'))
+        predictor = deserialize_keras_object(config.pop('predictor'))
+        return cls(encoder, decoder, predictor, **config)
+clear_output(wait=True)
+get_ipython().run_line_magic('clear', '')
+vae = load_model("./vae.keras",
+compile=False,
+ custom_objects={
+    "VAE": VAE,
+    "costum_loss": custom_loss,
+    "sampling": sampling
+})
+vae.summary()
+# ========== Evaluation ==========
+morgan_generator = GetMorganGenerator(radius=2, fpSize=2048)
+def smiles_to_features(smiles):
+    mol = Chem.MolFromSmiles(smiles)
+    return np.array(morgan_generator.GetFingerprintAsNumPy(mol)) if mol else np.zeros((2048,))
+data_path = './Dataset 1.xlsx'
+df = pd.read_excel(data_path)
+# Choose specific row number
+n = 68 #Row number can be changed, here.
+row = df.iloc[n]
+if not (pd.notna(row['MP']) ^ pd.notna(row['TDECOMP'])):
+    raise ValueError("Row must have either MP or TDECOMP, but not both or neither.")
+smiles = row['Cation'] + '.' + row['Anion']
+features = smiles_to_features(smiles).reshape(1, -1)
+pred = vae.predict(features)[:, 2048:]
+print(f"\nRow {n} SMILES: {smiles}")
+if pd.notna(row['MP']):
+    print(f"Actual MP: {row['MP']}")
+    print(f"Predicted MP: {pred[0, 0]}")
+elif pd.notna(row['TDECOMP']):
+    print(f"Actual TDECOMP: {row['TDECOMP']}")
+    print(f"Predicted TDECOMP: {pred[0, 1]}")
